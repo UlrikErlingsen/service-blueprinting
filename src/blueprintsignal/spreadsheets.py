@@ -13,20 +13,24 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 import pandas as pd
 
-from . import input_format as fmt, portable as io
+from . import input_format as fmt, limits, portable as io
 
 MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-# Files may be as large as the local upload cap (50 MB). The row, column and cell guards are method limits, not
-# file-size limits: one blueprint holds at most 12 stages, 120 service items and 250 handoffs (model.SCHEMA), so a
-# sheet with more than 10,000 rows cannot be one service's steps. The guards stop reading early instead of loading it.
-MAX_BYTES = 50 * 1024 * 1024
-MAX_ROWS = 10_000
-MAX_COLUMNS = 80
-MAX_CELLS = 250_000
-MAX_SHEETS = 30
-MAX_UNZIPPED_FACTOR = 10  # an .xlsx may expand to ten times the upload limit before it is treated as a zip bomb
-ROWS_HINT = ("A blueprint maps one service (at most 120 service items across 12 stages), so keep only that "
-             "service's steps, or split a long process into separate blueprints.")
+# Reading has no limits on the user's own computer. In the public demo (SIGNAL_PUBLIC=1) the caps in limits.py stop
+# reading early; each refusal says it is a demo limit.
+
+
+def _too_many(count, cap):
+    return cap is not None and count > cap
+
+
+def _shape_problem(title, rows=None, columns=None):
+    caps = []
+    if rows is not None:
+        caps.append(f"{limits.rows():,} rows")
+    if columns is not None:
+        caps.append(f"{limits.columns()} columns")
+    return io.DataProblem(limits.demo(f"{title}: the demo reads at most {' and '.join(caps)} per sheet."))
 COMMON_LABELS = {"id": "Reference", "name": "Name", "source_id": "Source reference", "note": "Notes", "url": "Source URL", "title": "Source title"}
 
 
@@ -60,8 +64,8 @@ def _frame(rows, title):
         raise io.DataProblem(f"{title}: put a name in every used column of the first row.")
     if len(set(map(normalize, header))) != len(header):
         raise io.DataProblem(f"{title}: column names must be distinct. Rename the duplicate headings.")
-    if len(rows)-1 > MAX_ROWS or len(header) > MAX_COLUMNS:
-        raise io.DataProblem(f"{title}: keep at most {MAX_ROWS:,} rows and {MAX_COLUMNS} columns. {ROWS_HINT}")
+    if _too_many(len(rows) - 1, limits.rows()) or _too_many(len(header), limits.columns()):
+        raise _shape_problem(title, rows=True, columns=True)
     data = []
     for index, row in enumerate(rows[1:], 2):
         if any(v not in (None, "") for v in row[len(header):]):
@@ -72,10 +76,20 @@ def _frame(rows, title):
     return pd.DataFrame(data, columns=header, dtype=object)
 
 
-def load_tables(files, max_bytes=MAX_BYTES):
-    """files is [(filename, bytes)]; no file contents enter a shared cache. max_bytes follows the server's cap."""
-    if not files or sum(len(raw) for _, raw in files) > max_bytes:
-        raise io.DataProblem(f"Choose Excel (.xlsx) or UTF-8 CSV files totalling no more than {max_bytes / 1024 / 1024:g} MB.")
+def load_tables(files):
+    """files is [(filename, bytes)]; no file contents enter a shared cache. Out of memory becomes a plain message."""
+    try:
+        return _load_tables(files)
+    except MemoryError as exc:
+        raise io.DataProblem(limits.MEMORY_NOTE) from exc
+
+
+def _load_tables(files):
+    if not files:
+        raise io.DataProblem("Choose Excel (.xlsx) or UTF-8 CSV files.")
+    cap = limits.upload_bytes()
+    if _too_many(sum(len(raw) for _, raw in files), cap):
+        raise io.DataProblem(limits.demo(f"Choose files totalling no more than {limits.megabytes(cap)}."))
     tables = {}
     cell_count = 0
     for filename, raw in files:
@@ -91,27 +105,30 @@ def load_tables(files, max_bytes=MAX_BYTES):
                 reader = csv.reader(StringIO(text), dialect, strict=True)
                 rows = []
                 for row in reader:
-                    if len(rows) > MAX_ROWS or len(row) > MAX_COLUMNS:
-                        raise io.DataProblem(f"{filename}: keep at most {MAX_ROWS:,} rows and {MAX_COLUMNS} columns. {ROWS_HINT}")
+                    if _too_many(len(rows), limits.rows()) or _too_many(len(row), limits.columns()):
+                        raise _shape_problem(filename, rows=True, columns=True)
                     rows.append(row)
                 parsed[Path(filename).stem] = _frame(rows, filename)
             elif suffix == ".xlsx":
                 with ZipFile(BytesIO(raw)) as archive:
-                    if sum(f.file_size for f in archive.infolist()) > MAX_UNZIPPED_FACTOR * max_bytes or len(archive.infolist()) > 1000:
-                        raise io.DataProblem("This workbook is too large when opened. Keep only the sheets and rows you need.")
+                    if (_too_many(sum(f.file_size for f in archive.infolist()), limits.unzipped_bytes())
+                            or _too_many(len(archive.infolist()), limits.zip_entries())):
+                        raise io.DataProblem(limits.demo("This workbook is too large when opened for the demo."))
                 formulas = load_workbook(BytesIO(raw), read_only=True, data_only=False, keep_links=False)
                 cached = None
                 try:
-                    if len(formulas.worksheets) > MAX_SHEETS:
-                        raise io.DataProblem(f"Keep at most {MAX_SHEETS} sheets in the workbook.")
+                    if _too_many(len(formulas.worksheets), limits.sheets()):
+                        raise io.DataProblem(limits.demo(f"The demo reads at most {limits.sheets()} sheets per workbook."))
                     cached = load_workbook(BytesIO(raw), read_only=True, data_only=True, keep_links=False)
                     for sheet in formulas.worksheets:
-                        if sheet.max_row and sheet.max_row > MAX_ROWS + 1 or sheet.max_column and sheet.max_column > MAX_COLUMNS:
-                            raise io.DataProblem(f"{sheet.title}: keep at most {MAX_ROWS:,} rows and {MAX_COLUMNS} columns, including formatted cells. {ROWS_HINT}")
+                        cap_rows = None if limits.rows() is None else limits.rows() + 1
+                        if (sheet.max_row and _too_many(sheet.max_row, cap_rows)
+                                or sheet.max_column and _too_many(sheet.max_column, limits.columns())):
+                            raise _shape_problem(sheet.title, rows=True, columns=True)
                         rows = []
                         for row, saved in zip(sheet.iter_rows(), cached[sheet.title].iter_rows()):
-                            if len(rows) > MAX_ROWS:
-                                raise io.DataProblem(f"{sheet.title}: keep at most {MAX_ROWS:,} rows. {ROWS_HINT}")
+                            if _too_many(len(rows), limits.rows()):
+                                raise _shape_problem(sheet.title, rows=True)
                             values = []
                             for cell, value in zip(row, saved):
                                 if cell.data_type == "f":
@@ -138,8 +155,8 @@ def load_tables(files, max_bytes=MAX_BYTES):
             if frame is None or normalize(name) in {"readme", "instructions"}:
                 continue
             cell_count += (len(frame)+1) * len(frame.columns)
-            if cell_count > MAX_CELLS:
-                raise io.DataProblem(f"The combined files contain more than {MAX_CELLS:,} cells. Remove unused sheets and columns. {ROWS_HINT}")
+            if _too_many(cell_count, limits.cells()):
+                raise io.DataProblem(limits.demo(f"The demo reads at most {limits.cells():,} cells across all files."))
             title = name if name not in tables else f"{Path(filename).stem} / {name}"
             if title in tables:
                 raise io.DataProblem("Two files have the same sheet names. Rename a file or sheet to distinguish them.")

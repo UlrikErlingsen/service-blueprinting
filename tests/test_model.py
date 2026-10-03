@@ -3,9 +3,12 @@ from io import BytesIO
 import json
 from zipfile import ZipFile
 
+import random
+
+import pandas as pd
 import pytest
 
-from blueprintsignal import model as m, portable as io
+from blueprintsignal import limits, model as m, portable as io
 
 
 def test_demo_has_explicit_assumptions_and_detects_rework():
@@ -79,19 +82,80 @@ def test_board_escapes_markup_and_keeps_lines_and_all_stages():
     assert len(json.loads(io.json_bytes(p))["data"]["stages"]) == 6
 
 
-def test_oversized_blueprint_gets_a_plain_message():
-    d = m.demo()["data"]
-    template = d["actions"][0]
-    d["actions"] = [{**template, "id": f"A{i}"} for i in range(1, m.CAPACITY["actions"] + 2)]
-    with pytest.raises(io.DataProblem, match="one blueprint holds at most 120"):
-        m.validate(d)
+def big_case(stages=30, per_stage=14, extra_links=200):
+    """A blueprint well beyond every public-demo cap."""
+    d = m.starter("Large service")
+    d["stages"] = [{"id": f"S{i}", "name": f"Stage {i}", "order": i} for i in range(1, stages + 1)]
+    lanes = list(m.LANES)
+    d["actions"] = [{"id": f"A{s}_{j}", "stage_id": f"S{s}", "lane": lanes[j % 5], "description": f"Step {j}",
+                     "owner": "Team" if j % 3 else "", "minutes": None, "basis": "assumed", "source_id": None,
+                     "evidence_note": ""} for s in range(1, stages + 1) for j in range(per_stage)]
+    ids = [a["id"] for a in d["actions"]]
+    pairs = list(zip(ids, ids[1:])) + [(ids[i + 7], ids[i]) for i in range(0, extra_links * 2, 2)]
+    d["links"] = [{"id": f"L{i}", "from_action": a, "to_action": b, "description": "Dependency"}
+                  for i, (a, b) in enumerate(pairs, 1)]
+    d["hazards"] = [{"id": f"F{i}", "action_id": ids[i], "failure": "Could fail", "impact": "low", "basis": "assumed",
+                     "source_id": None, "owner": ""} for i in range(150)]
+    d["improvements"] = [{"id": f"I{i}", "hazard_id": f"F{i}", "change": "Change", "owner": "", "measure": "",
+                          "target": "", "check_date": None, "status": "proposed"} for i in range(130)]
+    d["sources"] = [{"id": f"N{i}", "title": "Note", "url": None, "note": "Internal"} for i in range(110)]
+    return d
 
 
-def test_json_limit_matches_the_upload_cap_and_csv_text_is_neutralised():
-    assert io.MAX_JSON_BYTES == 50 * 1024 * 1024
-    with pytest.raises(io.DataProblem, match="below 1 MB"):
-        io.parse('{"x": "' + "a" * (1024 * 1024) + '"}', max_bytes=1024 * 1024)
-    import pandas as pd
+def test_local_mode_has_no_table_limits(monkeypatch):
+    monkeypatch.delenv("SIGNAL_PUBLIC", raising=False)
+    d = big_case()
+    assert {k: len(d[k]) for k in m.TITLES} == {"stages": 30, "actions": 420, "links": 619, "hazards": 150,
+                                                 "improvements": 130, "sources": 110}
+    assert all(len(d[k]) > limits.DEMO_TABLES[k] for k in m.TITLES)
+    assert m.validate(d) == d
+    results = m.audit(d)
+    assert len(results["handoffs"]) == 619 and results["handoffs"].in_rework_loop.any()
+    full, page = m.printable(io.project("blueprint", d)), m.board(d, {"S1", "S2"})
+    assert "Stage 30" in full and "Stage 30" not in page and "Stage 2<" in page
 
+
+def test_public_demo_enforces_table_caps(monkeypatch):
+    monkeypatch.setenv("SIGNAL_PUBLIC", "1")
+    with pytest.raises(io.DataProblem, match="the demo takes at most 12") as exc:
+        m.validate(big_case())
+    assert limits.DEMO_NOTE in str(exc.value)
+    assert m.validate(m.demo()["data"])  # the demo itself stays inside the caps
+
+
+def test_rework_loops_match_brute_force_reachability():
+    rng = random.Random(7)
+    for _ in range(60):
+        nodes = [f"A{i}" for i in range(rng.randint(1, 25))]
+        edges = {(rng.choice(nodes), rng.choice(nodes)) for _ in range(rng.randint(0, 40))}
+        edges = [(a, b) for a, b in edges if a != b]
+        component = m.loop_components(nodes, edges)
+        adjacency = {n: [b for a, b in edges if a == n] for n in nodes}
+
+        def reaches(start, end):
+            stack, seen = [start], set()
+            while stack:
+                node = stack.pop()
+                if node == end:
+                    return True
+                if node not in seen:
+                    seen.add(node)
+                    stack.extend(adjacency[node])
+            return False
+
+        for a, b in edges:
+            assert (component[a] == component[b]) == reaches(b, a)
+
+
+def test_json_has_no_local_size_limit_but_a_public_demo_cap(monkeypatch):
+    payload = '{"x": "' + "a" * (limits.DEMO_UPLOAD_BYTES + 10) + '"}'
+    monkeypatch.delenv("SIGNAL_PUBLIC", raising=False)
+    assert len(io.parse(payload)["x"]) == limits.DEMO_UPLOAD_BYTES + 10
+    monkeypatch.setenv("SIGNAL_PUBLIC", "1")
+    with pytest.raises(io.DataProblem, match="public demo"):
+        io.parse(payload)
+
+
+def test_csv_text_is_neutralised():
     raw = io.csv_bytes(pd.DataFrame({"text": ["=1+1", "\tcmd", " @x", "plain"]})).decode("utf-8-sig")
     assert "'=1+1" in raw and "'\tcmd" in raw and "' @x" in raw and "\nplain" in raw.replace("\r", "")

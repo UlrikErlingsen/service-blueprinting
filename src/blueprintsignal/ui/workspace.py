@@ -5,10 +5,10 @@ import json
 import pandas as pd
 import streamlit as st
 
-from blueprintsignal import portable as io
+from blueprintsignal import limits, portable as io
 from blueprintsignal import input_format as fmt, spreadsheets as sheets
 from blueprintsignal.ui import data_input
-from blueprintsignal.ui.session import HUB_NOTE, in_hub, k, upload_limit_bytes
+from blueprintsignal.ui.session import HUB_NOTE, in_hub, k
 
 
 class Workspace:
@@ -61,7 +61,8 @@ class Workspace:
             if st.form_submit_button("Start blank case", key=k("new_case_start")):
                 self.put(io.project(self.name, self.model.validate(self.model.starter(brief)), "User-defined case"))
                 st.rerun()
-        notes = st.text_area("Information or source material for your AI", max_chars=35000, height=160, key=k("notes"))
+        notes = st.text_area("Information or source material for your AI", max_chars=limits.notes_chars(), height=160,
+                             key=k("notes"))
         st.caption("Copy the prompt into your preferred AI. Paste its JSON back below. No API key or automatic data "
                    "transfer is involved: Blueprint Signal never contacts an AI service itself.")
         prompt = ("Prepare a draft for " + self.name.title() + " Signal. Return ONLY valid JSON matching the schema.\n"
@@ -78,13 +79,13 @@ class Workspace:
         with st.expander("Paste or upload the response", expanded=True):
             method = st.radio("Input method", ["Paste JSON", "Upload JSON"], horizontal=True, key=k("method"))
             if method == "Paste JSON":
-                raw = st.text_area("AI JSON response", height=200, max_chars=1000000, key=k("ai_json"))
+                raw = st.text_area("AI JSON response", height=200, max_chars=limits.pasted_chars(), key=k("ai_json"))
             else:
                 file = st.file_uploader("AI research JSON", type="json", key=k("ai_file"))
                 raw = file.getvalue() if file else b""
             if st.button("Import as unreviewed draft", key=k("import"), type="primary"):
                 try:
-                    data = self.model.validate(io.parse(raw, upload_limit_bytes()))
+                    data = self.model.validate(io.parse(raw))
                     if data["brief"] != self.d["brief"]:
                         raise io.DataProblem("The AI changed the brief. Keep the active brief exactly, or start a new case first.")
                     self.put(io.project(self.name, data))
@@ -153,7 +154,7 @@ class Workspace:
             st.caption("Restoring retains matching review notes. It does not authenticate the reviewer or recheck sources. "
                        "The file is read into this session only; it is not stored.")
             if st.button("Restore saved project", disabled=upload is None, key=k("restore")):
-                self.put(io.restore(upload.getvalue(), self.name, self.model.validate, upload_limit_bytes()))
+                self.put(io.restore(upload.getvalue(), self.name, self.model.validate))
                 st.rerun()
 
     def research(self):

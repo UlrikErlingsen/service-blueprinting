@@ -54,3 +54,21 @@ def test_blank_case_flow_and_invalid_ai_is_non_destructive():
     for i in [2, 3, 4, 5]:
         open_page(a, i)
         assert not a.error
+
+
+def test_large_blueprint_renders_paged_with_full_exports(monkeypatch):
+    from test_model import big_case
+
+    monkeypatch.delenv("SIGNAL_PUBLIC", raising=False)
+    a = AppTest.from_string("from blueprintsignal.ui import render\n\nrender()\n", default_timeout=120)
+    a.session_state["blueprint:project"] = io.project("blueprint", big_case(), "Large test case")
+    a.session_state["blueprint:revision"] = 0
+    a.run()
+    for page in a.sidebar.radio(key="blueprint:page").options:
+        a.sidebar.radio(key="blueprint:page").set_value(page).run()
+        assert not a.exception and not a.error, page
+    a.sidebar.radio(key="blueprint:page").set_value("3 · Service blueprint").run()
+    assert any("shows 12 at a time" in str(x.value) for x in a.info)
+    a.selectbox(key="blueprint:board_page").set_value(2).run()
+    assert not a.exception
+    assert "Stage 30" in "".join(str(x.value) for x in a.markdown)

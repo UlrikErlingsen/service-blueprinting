@@ -14,8 +14,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 import pandas as pd
 from jsonschema import Draft202012Validator, FormatChecker
 
-
-MAX_JSON_BYTES = 50 * 1024 * 1024  # matches the 50 MB local upload cap; a full blueprint is far smaller
+from blueprintsignal import limits
 
 
 class DataProblem(ValueError):
@@ -35,8 +34,9 @@ def number(low=0, high=1e12, nullable=False):
     return {"anyOf": [spec, {"type": "null"}]} if nullable else spec
 
 
-def array(item, limit=500, minimum=0):
-    return {"type": "array", "items": item, "minItems": minimum, "maxItems": limit}
+def array(item, minimum=0):
+    """No maxItems: table sizes are limited only in the public demo (limits.table)."""
+    return {"type": "array", "items": item, "minItems": minimum}
 
 
 ID = {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,39}$"}
@@ -56,11 +56,12 @@ def finite(value):
             finite(item)
 
 
-def parse(payload, max_bytes=MAX_JSON_BYTES):
+def parse(payload):
     try:
+        cap = limits.upload_bytes()
+        if cap is not None and len(payload) > cap:
+            raise DataProblem(limits.demo(f"Keep the JSON below {limits.megabytes(cap)}."))
         value = payload.decode("utf-8-sig") if isinstance(payload, bytes) else payload
-        if len(value.encode("utf-8")) > max_bytes:
-            raise DataProblem(f"Keep the JSON file below {max_bytes / 1024 / 1024:g} MB.")
         value = value.strip().lstrip("\ufeff")
         match = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", value, re.S | re.I)
         if match:
@@ -77,6 +78,8 @@ def parse(payload, max_bytes=MAX_JSON_BYTES):
         if not isinstance(result, dict):
             raise DataProblem("Paste one JSON object.")
         return result
+    except MemoryError as exc:
+        raise DataProblem(limits.MEMORY_NOTE) from exc
     except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise DataProblem("Invalid UTF-8 JSON. Paste only the complete object, without introductory prose.") from exc
     except ValueError as exc:
@@ -145,8 +148,8 @@ def accept(p, name, note):
     return p
 
 
-def restore(payload, app, validate, max_bytes=MAX_JSON_BYTES):
-    p = parse(payload, max_bytes)
+def restore(payload, app, validate):
+    p = parse(payload)
     if set(p) != {"format", "data", "origin", "review"} or p["format"] != app + "-project-v1":
         raise DataProblem("This is not a saved project for this app. Use AI import for raw research JSON.")
     p["data"] = validate(p["data"])

@@ -22,7 +22,7 @@ if errorlevel 1 (
 )
 if not defined ARROW_DEFAULT_MEMORY_POOL set ARROW_DEFAULT_MEMORY_POOL=system
 if "%BLUEPRINTSIGNAL_PORT%"=="" set BLUEPRINTSIGNAL_PORT=8602
-if "%BLUEPRINTSIGNAL_MAX_UPLOAD_MB%"=="" set BLUEPRINTSIGNAL_MAX_UPLOAD_MB=50
+if "%BLUEPRINTSIGNAL_MAX_UPLOAD_MB%"=="" set BLUEPRINTSIGNAL_MAX_UPLOAD_MB=10000
 echo Starting Blueprint Signal at http://127.0.0.1:%BLUEPRINTSIGNAL_PORT% ...
 ".venv\Scripts\python.exe" -m streamlit run app.py --server.headless=true --server.address=127.0.0.1 --server.port=%BLUEPRINTSIGNAL_PORT% --server.maxUploadSize=%BLUEPRINTSIGNAL_MAX_UPLOAD_MB% --server.fileWatcherType=none --browser.gatherUsageStats=false
 if errorlevel 1 pause

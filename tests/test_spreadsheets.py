@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from blueprintsignal import model, input_format as fmt, portable as io, spreadsheets as sheets
+from blueprintsignal import limits, model, input_format as fmt, portable as io, spreadsheets as sheets
 from blueprintsignal.ui import data_input
 
 APP = Path(__file__).resolve().parents[1] / "app.py"
@@ -206,17 +206,35 @@ def test_bad_upload_does_not_change_current_project(monkeypatch):
     assert a.session_state[NAME+":project"] == original
 
 
-def test_file_limit_follows_the_50_mb_upload_cap():
-    assert sheets.MAX_BYTES == 50 * 1024 * 1024
-    note = "x" * 700
-    raw = ("Stage,Service layer,What happens\n" + "".join(f"S,Customer actions,{i} {note}\n" for i in range(9_000))).encode()
-    assert 5_000_000 < len(raw) < sheets.MAX_BYTES  # above the old 5 MB limit, well inside the new one
-    assert len(sheets.load_tables([("large.csv", raw)])["large"]) == 9_000
-    with pytest.raises(io.DataProblem, match="no more than 1 MB"):
-        sheets.load_tables([("large.csv", raw)], max_bytes=1024 * 1024)
+def test_local_reading_has_no_limits(monkeypatch):
+    monkeypatch.delenv("SIGNAL_PUBLIC", raising=False)
+    header = ",".join(f"c{i}" for i in range(limits.DEMO_COLUMNS + 20))
+    body = "".join(",".join(["x"] * (limits.DEMO_COLUMNS + 20)) + "\n" for _ in range(limits.DEMO_ROWS + 2_000))
+    tables = sheets.load_tables([("wide.csv", (header + "\n" + body).encode())])
+    assert tables["wide"].shape == (limits.DEMO_ROWS + 2_000, limits.DEMO_COLUMNS + 20)
+    # More cells than the demo allows across files, and a long process list that maps to one large blueprint.
+    rows = "".join(f"Stage {i // 10},Customer actions,Step {i}\n" for i in range(3_000))
+    tables = sheets.load_tables([("process.csv", ("Stage,Service layer,What happens\n" + rows).encode())])
+    frame = tables["process"]
+    fields = fmt.QUICK["process"]["fields"]
+    mapping = {field: sheets.suggest(list(frame), [title, field] + aliases) for field, (title, _, aliases) in fields.items()}
+    d = fmt.build("Large service", {"process": sheets.mapped_rows(frame, mapping, fields)}, {}, "process.csv")
+    assert len(d["stages"]) == 300 and len(d["actions"]) == 3_000
 
 
-def test_row_guard_is_a_method_limit_with_a_clear_message():
-    raw = ("Stage,What happens\n" + "".join(f"S,Step {i}\n" for i in range(sheets.MAX_ROWS + 5))).encode()
-    with pytest.raises(io.DataProblem, match="one service"):
+def test_public_demo_enforces_reading_caps(monkeypatch):
+    monkeypatch.setenv("SIGNAL_PUBLIC", "1")
+    raw = ("Stage,What happens\n" + "".join(f"S,Step {i}\n" for i in range(limits.DEMO_ROWS + 5))).encode()
+    with pytest.raises(io.DataProblem, match="public demo"):
         sheets.load_tables([("long.csv", raw)])
+    with pytest.raises(io.DataProblem, match="public demo"):
+        sheets.load_tables([("big.csv", b"a\n" + b"x\n" * (limits.DEMO_UPLOAD_BYTES // 2 + 1))])
+
+
+def test_out_of_memory_is_a_plain_message(monkeypatch):
+    def exhausted(files):
+        raise MemoryError
+
+    monkeypatch.setattr(sheets, "_load_tables", exhausted)
+    with pytest.raises(io.DataProblem, match="not enough memory"):
+        sheets.load_tables([("x.csv", b"a\n1\n")])

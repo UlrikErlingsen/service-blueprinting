@@ -4,13 +4,33 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from blueprintsignal import __version__, model, portable as io
+from blueprintsignal import __version__, limits, model, portable as io
 from blueprintsignal.ui import signal_theme as sig
 from blueprintsignal.ui.session import NS, k
 from blueprintsignal.ui.workspace import Workspace
 
 PAGES = ["Overview", "1 · Add your data", "2 · Edit & review", "3 · Service blueprint", "4 · Handoffs & improvement",
          "5 · Export", "Research & limits"]
+
+
+ARROW_LIMIT = 300  # above this many dependencies the diagram draws plain lines
+
+
+def board_page(d):
+    """Show the board a page of stages at a time when it is too wide to read; exports always hold every stage."""
+    stages = model.ordered_stages(d)
+    size = model.BOARD_PAGE_STAGES
+    if len(stages) <= size:
+        return None
+    pages = [stages[i:i + size] for i in range(0, len(stages), size)]
+    labels = [f"Stages {i * size + 1}–{i * size + len(page)} ({page[0]['name']} to {page[-1]['name']})"
+              for i, page in enumerate(pages)]
+    choice = st.selectbox("Part of the blueprint to show", range(len(pages)), format_func=labels.__getitem__,
+                          key=k("board_page"))
+    choice = min(choice or 0, len(pages) - 1)
+    st.info(f"This blueprint has {len(stages):,} stages, so the board shows {size} at a time. The standalone download "
+            "and every export contain the whole blueprint.")
+    return {s["id"] for s in pages[choice]}
 
 
 def render() -> None:
@@ -49,7 +69,7 @@ def render() -> None:
         elif page == pages[3]:
             sig.header("CUSTOMER → DELIVERY → SUPPORT", "The service blueprint", "Stage columns show sequence; rows show who or what delivers each part.")
             st.text(w.d["brief"])
-            st.markdown("<style>.blueprint{overflow-x:auto;margin:20px 0}.blueprint table{border-collapse:collapse;width:100%;font-size:13px}.blueprint th,.blueprint td{padding:10px;border:1px solid #d4c7b2;vertical-align:top;min-width:140px;overflow-wrap:anywhere}.blueprint th{background:#edc8d8}.blueprint .cell{background:#f9f4ed;padding:12px;border-radius:12px;margin-bottom:10px}.blueprint small{color:#645c50}</style>" + model.board(w.d), unsafe_allow_html=True)
+            st.markdown("<style>.blueprint{overflow-x:auto;margin:20px 0}.blueprint table{border-collapse:collapse;width:100%;font-size:13px}.blueprint th,.blueprint td{padding:10px;border:1px solid #d4c7b2;vertical-align:top;min-width:140px;overflow-wrap:anywhere}.blueprint th{background:#edc8d8}.blueprint .cell{background:#f9f4ed;padding:12px;border-radius:12px;margin-bottom:10px}.blueprint small{color:#645c50}</style>" + model.board(w.d, board_page(w.d)), unsafe_allow_html=True)
             st.caption("Empty cells are unanswered design questions. Explicit dependencies and rework are listed on Handoffs & improvement; adjacency alone does not imply a dependency.")
             st.download_button("Download standalone blueprint", model.printable(w.p), "blueprint-brief.html", "text/html",
                                key=k("board_html"))
@@ -72,10 +92,20 @@ def render() -> None:
                     counts[cell] = offset + 1
                     positions[a["id"]] = (stage_x[a["stage_id"]] + 0.12 * offset, list(model.LANES).index(a["lane"]) + 0.13 * offset)
                 fig = go.Figure()
-                for link in w.d["links"]:
-                    x0, y0 = positions[link["from_action"]]
-                    x1, y1 = positions[link["to_action"]]
-                    fig.add_annotation(x=x1, y=y1, ax=x0, ay=y0, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor="#a19786", text="")
+                if len(w.d["links"]) <= ARROW_LIMIT:
+                    for link in w.d["links"]:
+                        x0, y0 = positions[link["from_action"]]
+                        x1, y1 = positions[link["to_action"]]
+                        fig.add_annotation(x=x1, y=y1, ax=x0, ay=y0, xref="x", yref="y", axref="x", ayref="y", showarrow=True, arrowhead=2, arrowcolor="#a19786", text="")
+                else:  # thousands of arrow annotations freeze the browser; one line trace draws them all
+                    xs, ys = [], []
+                    for link in w.d["links"]:
+                        (x0, y0), (x1, y1) = positions[link["from_action"]], positions[link["to_action"]]
+                        xs += [x0, x1, None]
+                        ys += [y0, y1, None]
+                    fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line={"color": "#a19786", "width": 1}, hoverinfo="skip"))
+                    st.caption(f"{len(w.d['links']):,} dependencies are drawn as plain lines without arrowheads to keep the diagram responsive. "
+                               "The table above lists the direction of each one.")
                 for lane, label in model.LANES.items():
                     rows = [a for a in w.d["actions"] if a["lane"] == lane]
                     fig.add_trace(go.Scatter(x=[positions[a["id"]][0] for a in rows], y=[positions[a["id"]][1] for a in rows],
@@ -100,4 +130,6 @@ def render() -> None:
             w.research()
     except io.DataProblem as exc:
         st.error(str(exc))
+    except MemoryError:
+        st.error(limits.MEMORY_NOTE)
     sig.footer(NS, __version__, "Service design with ownership and evidence")

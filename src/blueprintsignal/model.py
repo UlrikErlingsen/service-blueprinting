@@ -3,12 +3,12 @@ from html import escape
 
 import pandas as pd
 
-from blueprintsignal import portable as io
+from blueprintsignal import limits, portable as io
 
 LANES = {"evidence": "Physical / digital evidence", "customer": "Customer actions", "frontstage": "Visible staff / technology",
          "backstage": "Backstage actions", "support": "Support processes"}
 NULL_TEXT = {"anyOf": [io.text(120), {"type": "null"}]}
-STAGE = io.obj({"id": io.ID, "name": io.text(100), "order": {"type": "integer", "minimum": 1, "maximum": 100}})
+STAGE = io.obj({"id": io.ID, "name": io.text(100), "order": {"type": "integer", "minimum": 1}})
 ACTION = io.obj({"id": io.ID, "stage_id": io.ID, "lane": {"enum": list(LANES)}, "description": io.text(700),
                  "owner": io.text(120, True), "minutes": io.number(0, 100000, True),
                  "basis": {"enum": ["observed", "assumed", "proposed"]}, "source_id": NULL_TEXT, "evidence_note": io.text(1000, True)})
@@ -18,9 +18,9 @@ HAZARD = io.obj({"id": io.ID, "action_id": io.ID, "failure": io.text(700), "impa
 PLAN = io.obj({"id": io.ID, "hazard_id": io.ID, "change": io.text(700), "owner": io.text(120, True),
               "measure": io.text(400, True), "target": io.text(400, True),
               "check_date": {"anyOf": [io.DATE, {"type": "null"}]}, "status": {"enum": ["proposed", "testing", "complete"]}})
-SCHEMA = io.obj({"schema_version": {"const": "1.0"}, "brief": io.text(2500), "stages": io.array(STAGE, 12, 1),
-                 "actions": io.array(ACTION, 120), "links": io.array(LINK, 250), "hazards": io.array(HAZARD, 120),
-                 "improvements": io.array(PLAN, 120), "sources": io.array(io.SOURCE, 100)})
+SCHEMA = io.obj({"schema_version": {"const": "1.0"}, "brief": io.text(2500), "stages": io.array(STAGE, 1),
+                 "actions": io.array(ACTION), "links": io.array(LINK), "hazards": io.array(HAZARD),
+                 "improvements": io.array(PLAN), "sources": io.array(io.SOURCE)})
 TITLES = {"stages": "Stages · chronological order", "actions": "Actions and visible evidence · one item per row",
           "links": "Dependencies and handoffs · action IDs", "hazards": "Potential failure points",
           "improvements": "Improvement experiments", "sources": "Sources or supplied process notes"}
@@ -46,23 +46,19 @@ AI_RULES = ("Use the five lanes evidence, customer, frontstage, backstage, suppo
 REVIEW_GUIDANCE = "Check the process with the people delivering it. Confirm owners, lane placement, source alignment and whether each step is observed, assumed or proposed."
 
 
-# Method limits: one blueprint is one service on one screen. Larger processes belong in several blueprints.
-CAPACITY = {name: SCHEMA["properties"][name]["maxItems"] for name in TITLES}
-CAPACITY_NAMES = {"stages": "stages", "actions": "service items", "links": "handoffs", "hazards": "failure points",
-                  "improvements": "improvement plans", "sources": "sources"}
+# The board shows this many stages at once; larger blueprints are paged on screen, never cut in exports.
+BOARD_PAGE_STAGES = 12
 
 
 def check_capacity(data):
-    """Explain an oversized case plainly instead of letting the schema print the whole list."""
+    """Public demo only: refuse oversized cases with a plain message. Locally there is no table limit."""
     if not isinstance(data, dict):
         return
-    for name, limit in CAPACITY.items():
-        rows = data.get(name)
-        if isinstance(rows, list) and len(rows) > limit:
-            raise io.DataProblem(
-                f"This case has {len(rows):,} {CAPACITY_NAMES[name]}; one blueprint holds at most {limit}. "
-                "A blueprint maps one service at a readable level of detail: split a long process into separate "
-                "blueprints (for example one per part of the journey), or merge fine-grained steps.")
+    for name in TITLES:
+        cap, rows = limits.table(name), data.get(name)
+        if cap is not None and isinstance(rows, list) and len(rows) > cap:
+            raise io.DataProblem(limits.demo(
+                f"This case has {len(rows):,} {limits.TABLE_NAMES[name]}; the demo takes at most {cap}."))
 
 
 def validate(data):
@@ -133,50 +129,90 @@ def demo():
                      "Fictional reviewer", "Checked example structure only. All steps and timings remain assumptions.")
 
 
+def loop_components(nodes, links):
+    """Strongly connected components (iterative Tarjan), linear in items + links.
+
+    A link a -> b lies in a rework loop exactly when b can reach a again, i.e. when a and b share a component.
+    """
+    adjacency = {node: [] for node in nodes}
+    for a, b in links:
+        adjacency[a].append(b)
+    index, low, component, on_stack, stack, counter = {}, {}, {}, set(), [], 0
+    for root in nodes:
+        if root in index:
+            continue
+        work = [(root, 0)]
+        while work:
+            node, i = work.pop()
+            if i == 0:
+                index[node] = low[node] = counter
+                counter += 1
+                stack.append(node)
+                on_stack.add(node)
+            if i < len(adjacency[node]):
+                work.append((node, i + 1))
+                nxt = adjacency[node][i]
+                if nxt not in index:
+                    work.append((nxt, 0))
+                elif nxt in on_stack:
+                    low[node] = min(low[node], index[nxt])
+                continue
+            if low[node] == index[node]:
+                while True:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    component[member] = node
+                    if member == node:
+                        break
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[node])
+    return component
+
+
 def audit(d):
     actions = {a["id"]: a for a in d["actions"]}
     gaps = []
     for a in d["actions"]:
         if not a["owner"].strip():
             gaps.append({"record": a["id"], "issue": "No responsible owner", "detail": a["description"]})
+    with_customer = {a["stage_id"] for a in d["actions"] if a["lane"] == "customer"}
     for stage in d["stages"]:
-        if not any(a["stage_id"] == stage["id"] and a["lane"] == "customer" for a in d["actions"]):
+        if stage["id"] not in with_customer:
             gaps.append({"record": stage["id"], "issue": "No customer action supplied", "detail": stage["name"]})
+    planned = {plan["hazard_id"] for plan in d["improvements"]}
     for h in d["hazards"]:
         if not h["owner"].strip():
             gaps.append({"record": h["id"], "issue": "Failure point has no owner", "detail": h["failure"]})
-        if not any(p["hazard_id"] == h["id"] for p in d["improvements"]):
+        if h["id"] not in planned:
             gaps.append({"record": h["id"], "issue": "No improvement linked", "detail": h["failure"]})
-    for p in d["improvements"]:
+    for plan in d["improvements"]:
         for field in ["owner", "measure", "target", "check_date"]:
-            if not p[field] or not str(p[field]).strip():
-                gaps.append({"record": p["id"], "issue": "Improvement missing " + field, "detail": p["change"]})
-    adjacency = {key: [] for key in actions}
-    for link in d["links"]:
-        adjacency[link["from_action"]].append(link["to_action"])
-    def reaches(start, end):
-        stack, seen = [start], set()
-        while stack:
-            node = stack.pop()
-            if node == end:
-                return True
-            if node not in seen:
-                seen.add(node)
-                stack.extend(adjacency[node])
-        return False
+            if not plan[field] or not str(plan[field]).strip():
+                gaps.append({"record": plan["id"], "issue": "Improvement missing " + field, "detail": plan["change"]})
+    component = loop_components(list(actions), [(x["from_action"], x["to_action"]) for x in d["links"]])
     handoffs = []
     for link in d["links"]:
         a, b = actions[link["from_action"]], actions[link["to_action"]]
         handoffs.append({**link, "from_owner": a["owner"] or "Unassigned", "to_owner": b["owner"] or "Unassigned",
                          "changes_owner": a["owner"].strip().casefold() != b["owner"].strip().casefold(),
-                         "crosses_lane": a["lane"] != b["lane"], "in_rework_loop": reaches(b["id"], a["id"])})
+                         "crosses_lane": a["lane"] != b["lane"],
+                         "in_rework_loop": component[a["id"]] == component[b["id"]]})
     return {"gaps": pd.DataFrame(gaps, columns=["record", "issue", "detail"]),
             "handoffs": pd.DataFrame(handoffs, columns=list(LINK["properties"]) + ["from_owner", "to_owner", "changes_owner", "crosses_lane", "in_rework_loop"])}
 
 
-def board(d):
+def ordered_stages(d):
+    return sorted(d["stages"], key=lambda s: s["order"])
+
+
+def board(d, stage_ids=None):
+    """The blueprint as an HTML table. stage_ids limits it to some stages (on-screen paging); exports pass None."""
     e = escape
-    stages = sorted(d["stages"], key=lambda s: s["order"])
+    stages = [s for s in ordered_stages(d) if stage_ids is None or s["id"] in stage_ids]
+    cells = {}
+    for a in d["actions"]:
+        cells.setdefault((a["stage_id"], a["lane"]), []).append(a)
     parts = ["<div class='blueprint'><table><thead><tr><th>Service layer</th>"]
     parts.extend(f"<th>{e(s['name'])}<br><small>{e(s['id'])}</small></th>" for s in stages)
     parts.append("</tr></thead><tbody>")
@@ -184,7 +220,7 @@ def board(d):
     for lane, title in LANES.items():
         parts.append(f"<tr><th>{title}</th>")
         for stage in stages:
-            rows = [a for a in d["actions"] if a["stage_id"] == stage["id"] and a["lane"] == lane]
+            rows = cells.get((stage["id"], lane), [])
             parts.append("<td>" + ("".join(f"<div class='cell'><b>{e(a['id'])}</b> · {e(a['description'])}<br><small>{e(a['owner'] or 'Owner needed')} · {e(a['basis'])}</small></div>" for a in rows) or "<small>No item supplied</small>") + "</td>")
         parts.append("</tr>")
         if lane in boundaries:

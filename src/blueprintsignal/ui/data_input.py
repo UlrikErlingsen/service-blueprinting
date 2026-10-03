@@ -4,8 +4,8 @@ import hashlib
 import pandas as pd
 import streamlit as st
 
-from blueprintsignal import input_format as fmt, portable as io, spreadsheets as sheets
-from blueprintsignal.ui.session import k, upload_limit_bytes
+from blueprintsignal import input_format as fmt, limits, portable as io, spreadsheets as sheets
+from blueprintsignal.ui.session import k
 
 MODES = ["Excel or CSV", "Enter manually", "Use your AI"]
 PAGE = "1 · Add your data"
@@ -59,16 +59,16 @@ def spreadsheet_input(w):
     templates(w)
     uploads = st.file_uploader("Upload your Excel workbook or CSV files", type=["xlsx", "csv"], accept_multiple_files=True, key=k("spreadsheets"))
     st.caption("Excel can contain several sheets. For separate CSV tables, select the files together. Files stay in this session until you save a project; nothing is sent to an AI.")
-    cap = w.model.CAPACITY
-    st.caption(f"Up to {upload_limit_bytes() / 1024 / 1024:g} MB in total. One blueprint holds up to {cap['stages']} stages "
-               f"and {cap['actions']} service items; larger processes belong in several blueprints.")
+    if limits.public():
+        st.caption(f"Public demo: up to {limits.megabytes(limits.upload_bytes())} in total, {limits.table('stages')} stages "
+                   f"and {limits.table('actions')} service items. {limits.DEMO_NOTE}")
     if not uploads:
         return
     files = [(u.name, u.getvalue()) for u in uploads]
     fingerprint = hashlib.sha256(b"".join(name.encode()+raw for name, raw in files)).hexdigest()[:20]
     cache = st.session_state.get(k("parsed_spreadsheet"))
     if cache is None or cache[0] != fingerprint:
-        cache = (fingerprint, sheets.load_tables(files, upload_limit_bytes()))
+        cache = (fingerprint, sheets.load_tables(files))
         st.session_state[k("parsed_spreadsheet")] = cache
     tables = cache[1]
     full_guess = "Case" in tables and all(fmt.TABLE_NAMES[name] in tables for name in w.model.TITLES)
