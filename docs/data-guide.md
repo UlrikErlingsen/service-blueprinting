@@ -2,7 +2,7 @@
 
 Blueprint Signal maps one service. You can start from a process list in Excel or CSV, a complete project workbook, manual entry in the app's tables, or a JSON draft from an AI assistant. The **1 · Add your data** page offers a simple Excel example, a complete example workbook built from the fictional demo, and a CSV example. All examples are fictional; replace every row before drawing conclusions.
 
-Uploads are capped at 50 MB when run locally (set `BLUEPRINTSIGNAL_MAX_UPLOAD_MB` to change it; the in-app check follows the server cap). Excel files must be `.xlsx`; CSV files must be UTF-8 (a byte-order mark is fine) with a header row and a comma, semicolon or tab delimiter.
+There are no app-imposed size limits on your own computer (see [Data limits](#data-limits)). Excel files must be `.xlsx`; CSV files must be UTF-8 (a byte-order mark is fine) with a header row and a comma, semicolon or tab delimiter.
 
 ## Simple process list: one row per service item
 
@@ -30,14 +30,14 @@ The Excel export of any project re-imports as a complete project workbook, so th
 
 | Sheet | Columns | Rows |
 |---|---|---|
-| Stages | Reference, Name, Order | 1–12 |
-| Service items | Reference, Stage reference, Service layer (`evidence`, `customer`, `frontstage`, `backstage`, `support`), Description, Responsible person or team, Time in minutes, Evidence status, Source reference, Evidence note | 0–120 |
-| Handoffs | Reference, From step, To step, Description | 0–250 |
-| Failure points | Reference, Step reference, Failure, Impact (`low`, `medium`, `high`), Evidence status (`observed`, `assumed`), Source reference, Responsible person or team | 0–120 |
-| Improvement plans | Reference, Failure point reference, Change, Responsible person or team, Measure, Target, Follow-up date (YYYY-MM-DD), Status (`proposed`, `testing`, `complete`) | 0–120 |
-| Sources | Reference, Source title, Source URL, Notes | 0–100 |
+| Stages | Reference, Name, Order | 1 or more |
+| Service items | Reference, Stage reference, Service layer (`evidence`, `customer`, `frontstage`, `backstage`, `support`), Description, Responsible person or team, Time in minutes, Evidence status, Source reference, Evidence note | any |
+| Handoffs | Reference, From step, To step, Description | any |
+| Failure points | Reference, Step reference, Failure, Impact (`low`, `medium`, `high`), Evidence status (`observed`, `assumed`), Source reference, Responsible person or team | any |
+| Improvement plans | Reference, Failure point reference, Change, Responsible person or team, Measure, Target, Follow-up date (YYYY-MM-DD), Status (`proposed`, `testing`, `complete`) | any |
+| Sources | Reference, Source title, Source URL, Notes | any |
 
-References start with a letter and use letters, digits, `_` or `-` (at most 40 characters). Stage orders are whole numbers from 1 to 100 and must be unique. Source URLs must be public `http` or `https` links, or blank for internal material such as interview notes. Result sheets in an exported workbook are ignored on import, and review records are never imported from Excel.
+References start with a letter and use letters, digits, `_` or `-` (at most 40 characters). Stage orders are whole numbers from 1 upwards and must be unique. Source URLs must be public `http` or `https` links, or blank for internal material such as interview notes. Result sheets in an exported workbook are ignored on import, and review records are never imported from Excel.
 
 ## AI draft (JSON)
 
@@ -45,11 +45,15 @@ Under **Use your AI**, describe the case and paste any notes or source material.
 
 The JSON is checked against the same schema and cross-reference rules as any other input, must keep the case brief unchanged, and is imported as an unreviewed draft. Duplicate keys, `NaN` or infinite numbers and anything other than one JSON object are rejected. If validation fails, the app shows the errors and a repair instruction to give back to the AI; your current case is unchanged.
 
-## Limits
+## Data limits
 
-A blueprint is limited by method, not file size. One service on one readable board holds at most **12 stages, 120 service items, 250 handoffs, 120 failure points, 120 improvement plans and 100 sources**. When a file has more, the app names the count and suggests splitting the service into separate blueprints (for example one per part of the journey) or merging fine-grained steps.
+**On your own computer there are no app-imposed limits.** Files, rows, columns, stages, service items, handoffs, failure points, plans and sources are limited only by your computer's memory. Streamlit's upload cap is set to 10,000 MB (`BLUEPRINTSIGNAL_MAX_UPLOAD_MB` in the launchers). If the computer runs out of memory, the app says so plainly instead of crashing.
 
-To stop reading early rather than load a file that cannot be one service, each sheet is limited to 10,000 rows and 80 columns, a workbook to 30 sheets, and all uploaded files together to 250,000 cells. A workbook may expand to ten times the upload cap when unzipped.
+**Very large blueprints stay readable.** When a blueprint has more than 12 stages, the board shows 12 stages at a time with a selector and a note; with more than 300 dependencies the diagram draws plain lines instead of arrows. The handoff review, questions to resolve, the standalone board download and every export always contain the whole blueprint.
+
+**The public demo has caps** (when the operator sets `SIGNAL_PUBLIC=1`, as the public Signal Hub does): 50 MB of uploads in total; 10,000 rows and 80 columns per sheet, 30 sheets and 250,000 cells across files; 12 stages, 120 service items, 250 handoffs, 120 failure points, 120 improvement plans and 100 sources; a pasted AI reply of 1,000,000 characters and AI notes of 35,000. A refusal says it is a demo limit; the downloaded app has none. All caps live in `src/blueprintsignal/limits.py`.
+
+In the demo the unzipped size of a workbook is also capped at ten times the upload cap and 1,000 archive entries.
 
 ## What gets rejected
 
@@ -61,7 +65,7 @@ The file or draft is rejected, with the reason shown and the current case left u
 - the file is `.xls` (save it as `.xlsx`) or is not a readable workbook or UTF-8 CSV;
 - a reference does not resolve, an ID or stage order is repeated, a dependency joins an item to itself or repeats a pair;
 - an observed service item has no source or evidence note, or an observed failure point has no source;
-- a limit above is exceeded.
+- in the public demo only, a demo cap above is exceeded.
 
 ## Before you upload
 

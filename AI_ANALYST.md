@@ -37,7 +37,7 @@ Ask the user to fix: the one service to map, the customer type, where the servic
 
 ### Limits
 
-Keep one blueprint to at most 12 stages and 120 service items (also at most 250 handoffs, 120 failure points, 120 improvement plans and 100 sources). If the material needs more, split the service or merge fine-grained steps, and say which.
+There is no fixed size limit, but a blueprint is easiest to read with about a dozen stages. If the material is much larger, show the board in parts of up to 12 stages and keep every record in the tables, or suggest splitting the service, and say which you did.
 
 ## Step 1: Structure the service
 

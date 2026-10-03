@@ -31,7 +31,7 @@ Everything runs locally with open-source Python packages. There is no account, t
 
 **Version 1.0 supports:**
 
-- one service per blueprint, with up to 12 stages, 120 service items, 250 handoffs, 120 failure points, 120 improvement plans and 100 sources;
+- one service per blueprint, of any size your computer can hold; boards with more than 12 stages are shown 12 stages at a time;
 - five service layers (physical or digital evidence, customer actions, visible staff and technology, backstage actions, support processes) separated by the lines of interaction, visibility and internal interaction;
 - four ways to start, on equal footing: an Excel or CSV process list, a complete project workbook, manual entry in editable tables, or a copy-paste prompt for the AI assistant of your choice;
 - explicit dependencies between service items, including rework loops, with owner and layer changes flagged;
@@ -63,17 +63,23 @@ Start from a process list: one row per service item. Excel (.xlsx) and UTF-8 CSV
 - **Complete project workbook:** a `Case` sheet with the brief and six linked sheets (Stages, Service items, Handoffs, Failure points, Improvement plans, Sources). The Excel export of any project re-imports as one.
 - **AI route:** the app writes a prompt containing the exact JSON schema and your notes. Paste the AI's JSON back; it is validated and imported as an unreviewed draft.
 
-**Limits.** Uploads are capped at 50 MB when run locally. A blueprint itself is limited by method, not file size: one service on one readable board holds at most 12 stages and 120 service items, and the app says so and suggests splitting the service when a file has more. To stop reading early, each sheet is limited to 10,000 rows and 80 columns, a workbook to 30 sheets, and all files together to 250,000 cells.
-
 Files are rejected, with the reason shown, for blank or duplicate column headings, rows with more values than headings, unknown service layers or evidence statuses, negative or non-numeric minutes, formulas without a saved result, Excel error cells, `.xls` files, references that do not resolve, and observed items without a source or note.
 
 See the [data guide](docs/data-guide.md).
+
+### Data limits
+
+**On your own computer there are no app-imposed limits.** Files, rows, columns, stages, service items, handoffs, failure points, plans and sources are limited only by your computer's memory. Streamlit's upload cap is set to 10,000 MB (`BLUEPRINTSIGNAL_MAX_UPLOAD_MB` in the launchers). If the computer runs out of memory, the app says so plainly instead of crashing.
+
+**Very large blueprints stay readable.** When a blueprint has more than 12 stages, the board shows 12 stages at a time with a selector and a note; with more than 300 dependencies the diagram draws plain lines instead of arrows. The handoff review, questions to resolve, the standalone board download and every export always contain the whole blueprint.
+
+**The public demo has caps** (when the operator sets `SIGNAL_PUBLIC=1`, as the public Signal Hub does): 50 MB of uploads in total; 10,000 rows and 80 columns per sheet, 30 sheets and 250,000 cells across files; 12 stages, 120 service items, 250 handoffs, 120 failure points, 120 improvement plans and 100 sources; a pasted AI reply of 1,000,000 characters and AI notes of 35,000. A refusal says it is a demo limit; the downloaded app has none. All caps live in `src/blueprintsignal/limits.py`.
 
 ## Methods
 
 1. **Validate.** Every case, however it arrives, passes one JSON Schema plus cross-checks: unique IDs and stage orders, every reference resolves, no self-links or duplicate dependencies, finite numbers, public HTTP(S) source links only, and the evidence rules for observed items.
 2. **Draw the blueprint.** Stages run left to right; the five service layers run top to bottom with the lines of interaction, visibility and internal interaction between them (Shostack, 1982, 1984; Bitner, Ostrom & Morgan, 2008). Empty cells read "No item supplied": an unanswered design question, not proof that nothing happens.
-3. **Review the handoffs.** For each explicit dependency the app reports the two owners, whether the owner changes (compared case-insensitively), whether it crosses a service layer, and whether it sits in a rework loop (the target can reach the source again through the links). A diagram shows the dependencies with equal visual weight.
+3. **Review the handoffs.** For each explicit dependency the app reports the two owners, whether the owner changes (compared case-insensitively), whether it crosses a service layer, and whether it sits in a rework loop (the target can reach the source again through the links, found with strongly connected components). A diagram shows the dependencies with equal visual weight.
 4. **List questions to resolve.** Fixed rules flag service items without an owner, stages without a customer action, failure points without an owner or a linked plan, and plans missing an owner, measure, target or follow-up date.
 5. **Plan improvements.** Failure points (impact low, medium or high, observed or assumed) link to service items; plans link to failure points with an owner, measure, target, date and status.
 6. **Review.** A named reviewer records what was checked. The record carries the SHA-256 of the inputs, so an edit or a different file invalidates it.
@@ -117,7 +123,7 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-Then open the local address shown in the terminal. Blueprint Signal prefers local port 8602; the macOS launcher falls back to another free port if it is taken. Both launchers accept `BLUEPRINTSIGNAL_PORT` and `BLUEPRINTSIGNAL_MAX_UPLOAD_MB` (default 50), and the macOS launcher also accepts `BLUEPRINTSIGNAL_NO_BROWSER=1`. The in-app file check follows the server's upload cap.
+Then open the local address shown in the terminal. Blueprint Signal prefers local port 8602; the macOS launcher falls back to another free port if it is taken. Both launchers accept `BLUEPRINTSIGNAL_PORT` and `BLUEPRINTSIGNAL_MAX_UPLOAD_MB` (default 10000), and the macOS launcher also accepts `BLUEPRINTSIGNAL_NO_BROWSER=1`.
 
 ### Docker
 
@@ -126,7 +132,7 @@ docker build -t blueprintsignal .
 docker run --rm -p 8602:8602 blueprintsignal
 ```
 
-Then open http://127.0.0.1:8602. The container runs as a non-root user and caps uploads at 50 MB (`STREAMLIT_SERVER_MAX_UPLOAD_SIZE`).
+Then open http://127.0.0.1:8602. The container runs as a non-root user and allows uploads up to 10,000 MB (`STREAMLIT_SERVER_MAX_UPLOAD_SIZE`). Add `-e SIGNAL_PUBLIC=1` for a public demo with the caps above.
 
 ## Privacy
 
@@ -145,7 +151,7 @@ python -m ruff check .
 python -m build
 ```
 
-The core installs without Streamlit or Plotly; `pip install -e ".[ui]"` adds the app dependencies. Tests cover schema and cross-reference validation, evidence rules, rework-loop detection, the structural checks, review binding and project round trips, markup escaping in the board, spreadsheet mapping and round trips, file and method limits, spreadsheet-safe exports, every Streamlit page, and the Signal Hub contract (`blueprintsignal.ui.render`, namespaced keys, Hub mode, no repo-root file reads).
+The core installs without Streamlit or Plotly; `pip install -e ".[ui]"` adds the app dependencies. Tests cover schema and cross-reference validation, evidence rules, rework-loop detection, the structural checks, review binding and project round trips, markup escaping in the board, spreadsheet mapping and round trips, no limits locally and demo caps under `SIGNAL_PUBLIC=1`, paged rendering of large blueprints, out-of-memory messages, spreadsheet-safe exports, every Streamlit page, and the Signal Hub contract (`blueprintsignal.ui.render`, namespaced keys, Hub mode, no repo-root file reads).
 
 ## Where this fits in Signal
 

@@ -6,20 +6,20 @@ Blueprint Signal structures a description of one service and checks it for gaps.
 
 A case has a brief (the service, its boundaries and the question) and six linked tables:
 
-- **Stages:** the service's phases from the customer's point of view, ordered explicitly (up to 12).
-- **Service items:** one action or piece of evidence each, placed in a stage and a service layer, with an owner, an optional duration, an evidence status, an optional source and an evidence note (up to 120).
-- **Handoffs:** explicit dependencies from one service item to another, with a description (up to 250). Rework links that point back to an earlier item are allowed.
-- **Failure points:** what can go wrong at a service item, with an ordinal impact (low, medium, high), an evidence status, an optional source and an owner (up to 120).
-- **Improvement plans:** a change linked to a failure point, with an owner, a measure, a target, a follow-up date and a status (up to 120).
-- **Sources:** the material behind observed items, with a public link or none for internal notes (up to 100).
+- **Stages:** the service's phases from the customer's point of view, ordered explicitly.
+- **Service items:** one action or piece of evidence each, placed in a stage and a service layer, with an owner, an optional duration, an evidence status, an optional source and an evidence note.
+- **Handoffs:** explicit dependencies from one service item to another, with a description. Rework links that point back to an earlier item are allowed.
+- **Failure points:** what can go wrong at a service item, with an ordinal impact (low, medium, high), an evidence status, an optional source and an owner.
+- **Improvement plans:** a change linked to a failure point, with an owner, a measure, a target, a follow-up date and a status.
+- **Sources:** the material behind observed items, with a public link or none for internal notes.
 
-The limits are method limits: a blueprint is meant to be read on one board and discussed by the people who deliver the service. A larger process belongs in several blueprints.
+There are no table limits on your own computer. A blueprint is easiest to discuss when it fits on one board, so the board shows 12 stages at a time when there are more; the analysis and exports always use every record. The public demo caps table sizes (see the [data guide](data-guide.md#data-limits)).
 
 ## 2. Validation
 
 Every input route (spreadsheet, manual edit, AI JSON, restored project) passes the same checks before it replaces the current case:
 
-1. a JSON Schema (Draft 2020-12) for types, required fields, text lengths, allowed values, dates and the table sizes above;
+1. a JSON Schema (Draft 2020-12) for types, required fields, text lengths, allowed values and dates (table sizes are checked only in the public demo);
 2. finite numbers only; missing numbers are `null`, never `NaN` or zero;
 3. unique IDs in every table and unique stage orders;
 4. every stage, service item, failure point and source reference resolves;
@@ -48,9 +48,9 @@ For each handoff from item *a* to item *b* the app reports:
 - the owner of each side ("Unassigned" when blank);
 - **changes owner:** the two owners differ after trimming and case-folding;
 - **crosses layer:** *a* and *b* sit in different service layers;
-- **in rework loop:** *b* can reach *a* again by following handoffs (a depth-first search over the declared links).
+- **in rework loop:** *b* can reach *a* again by following handoffs. The app finds this with strongly connected components (Tarjan's algorithm), which takes time proportional to items plus handoffs, so very large blueprints stay fast.
 
-When any handoff is in a loop, the app warns that action durations cannot be added into a linear service time. The dependency diagram places items by stage and layer and draws every handoff with the same weight: it shows structure, not traffic, probability or measured customer flow.
+When any handoff is in a loop, the app warns that action durations cannot be added into a linear service time. The dependency diagram places items by stage and layer and draws every handoff with the same weight (as plain lines without arrowheads above 300 handoffs): it shows structure, not traffic, probability or measured customer flow.
 
 ## 5. Questions to resolve
 
