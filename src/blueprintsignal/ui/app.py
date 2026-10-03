@@ -4,27 +4,32 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from blueprintsignal import model, portable as io
+from blueprintsignal import __version__, model, portable as io
 from blueprintsignal.ui import signal_theme as sig
+from blueprintsignal.ui.session import NS, k
 from blueprintsignal.ui.workspace import Workspace
 
+PAGES = ["Overview", "1 · Add your data", "2 · Edit & review", "3 · Service blueprint", "4 · Handoffs & improvement",
+         "5 · Export", "Research & limits"]
 
-def render():
-    sig.apply("blueprint")
-    w = Workspace("blueprint", model)
-    sig.sidebar_brand("blueprint", "Make the service behind the experience visible.")
-    pages = ["Overview", "1 · Add your data", "2 · Edit & review", "3 · Service blueprint", "4 · Handoffs & improvement", "5 · Export", "Research & limits"]
+
+def render() -> None:
+    """Draw the whole app on the current page. Never calls st.set_page_config or st.navigation."""
+    sig.apply(NS)
+    w = Workspace(NS, model)
+    sig.sidebar_brand(NS, "Make the service behind the experience visible.")
+    pages = PAGES
     with st.sidebar:
-        page = st.radio("Navigate", pages, label_visibility="collapsed", key=w.key("page"))
+        page = st.radio("Navigate", pages, label_visibility="collapsed", key=k("page"))
         st.caption("EXCEL · CSV · MANUAL · OPTIONAL AI")
-        if st.button("Reset fictional demo", key=w.key("reset")):
+        if st.button("Reset fictional demo", key=k("reset")):
             w.reset()
             st.rerun()
-    sig.masthead("blueprint", ["Service design", "Visible ownership", "Excel, CSV or AI"])
+    sig.masthead(NS, ["Service design", "Visible ownership", "Excel, CSV or AI"])
     w.status()
     try:
         if page == "Overview":
-            sig.hero("blueprint", eyebrow="SERVICE BLUEPRINTING", title="See the whole service.", em="Improve the handoffs.",
+            sig.hero(NS, eyebrow="SERVICE BLUEPRINTING", title="See the whole service.", em="Improve the handoffs.",
                      body="Connect the customer's experience to the people, technology and backstage work that make it happen.",
                      pills=["Editable service layers", "Evidence and assumptions", "Improvement plans"])
             w.welcome()
@@ -46,7 +51,8 @@ def render():
             st.text(w.d["brief"])
             st.markdown("<style>.blueprint{overflow-x:auto;margin:20px 0}.blueprint table{border-collapse:collapse;width:100%;font-size:13px}.blueprint th,.blueprint td{padding:10px;border:1px solid #d4c7b2;vertical-align:top;min-width:140px;overflow-wrap:anywhere}.blueprint th{background:#edc8d8}.blueprint .cell{background:#f9f4ed;padding:12px;border-radius:12px;margin-bottom:10px}.blueprint small{color:#645c50}</style>" + model.board(w.d), unsafe_allow_html=True)
             st.caption("Empty cells are unanswered design questions. Explicit dependencies and rework are listed on Handoffs & improvement; adjacency alone does not imply a dependency.")
-            st.download_button("Download standalone blueprint", model.printable(w.p), "blueprint-brief.html", "text/html")
+            st.download_button("Download standalone blueprint", model.printable(w.p), "blueprint-brief.html", "text/html",
+                               key=k("board_html"))
         elif page == pages[4]:
             sig.header("OWNERSHIP → FAILURE POINTS → FOLLOW-UP", "Where does the service need attention?")
             result = model.audit(w.d)
@@ -78,7 +84,7 @@ def render():
                 fig.update_xaxes(tickvals=list(stage_x.values()), ticktext=[escape(s["name"]) for s in stages])
                 fig.update_yaxes(tickvals=list(range(5)), ticktext=list(model.LANES.values()), autorange="reversed")
                 fig.update_layout(height=470, showlegend=False)
-                sig.chart("blueprint", fig, key=w.key("links_chart"))
+                sig.chart(NS, fig, key=k("links_chart"))
                 st.caption("Each link has equal visual weight. This diagram shows dependencies, not traffic, probability or measured customer flow.")
             st.subheader("Questions to resolve")
             if result["gaps"].empty:
@@ -94,4 +100,4 @@ def render():
             w.research()
     except io.DataProblem as exc:
         st.error(str(exc))
-    sig.footer("blueprint", "0.1.0", "Service design with ownership and evidence")
+    sig.footer(NS, __version__, "Service design with ownership and evidence")

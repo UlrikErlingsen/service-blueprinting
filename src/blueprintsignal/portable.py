@@ -15,6 +15,9 @@ import pandas as pd
 from jsonschema import Draft202012Validator, FormatChecker
 
 
+MAX_JSON_BYTES = 50 * 1024 * 1024  # matches the 50 MB local upload cap; a full blueprint is far smaller
+
+
 class DataProblem(ValueError):
     pass
 
@@ -53,11 +56,11 @@ def finite(value):
             finite(item)
 
 
-def parse(payload):
+def parse(payload, max_bytes=MAX_JSON_BYTES):
     try:
         value = payload.decode("utf-8-sig") if isinstance(payload, bytes) else payload
-        if len(value.encode("utf-8")) > 5_000_000:
-            raise DataProblem("Keep the JSON file below 5 MB.")
+        if len(value.encode("utf-8")) > max_bytes:
+            raise DataProblem(f"Keep the JSON file below {max_bytes / 1024 / 1024:g} MB.")
         value = value.strip().lstrip("\ufeff")
         match = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", value, re.S | re.I)
         if match:
@@ -142,8 +145,8 @@ def accept(p, name, note):
     return p
 
 
-def restore(payload, app, validate):
-    p = parse(payload)
+def restore(payload, app, validate, max_bytes=MAX_JSON_BYTES):
+    p = parse(payload, max_bytes)
     if set(p) != {"format", "data", "origin", "review"} or p["format"] != app + "-project-v1":
         raise DataProblem("This is not a saved project for this app. Use AI import for raw research JSON.")
     p["data"] = validate(p["data"])
@@ -164,7 +167,7 @@ def json_bytes(data):
 
 def csv_bytes(frame):
     def safe(value):
-        if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+        if isinstance(value, str) and (value.startswith(("\t", "\r")) or value.lstrip().startswith(("=", "+", "-", "@"))):
             return "'" + value
         return value
     return frame.apply(lambda col: col.map(safe)).to_csv(index=False).encode("utf-8-sig")

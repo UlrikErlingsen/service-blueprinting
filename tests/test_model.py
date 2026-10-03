@@ -77,3 +77,21 @@ def test_board_escapes_markup_and_keeps_lines_and_all_stages():
     assert "No item supplied" in html
     assert "@media print" in html
     assert len(json.loads(io.json_bytes(p))["data"]["stages"]) == 6
+
+
+def test_oversized_blueprint_gets_a_plain_message():
+    d = m.demo()["data"]
+    template = d["actions"][0]
+    d["actions"] = [{**template, "id": f"A{i}"} for i in range(1, m.CAPACITY["actions"] + 2)]
+    with pytest.raises(io.DataProblem, match="one blueprint holds at most 120"):
+        m.validate(d)
+
+
+def test_json_limit_matches_the_upload_cap_and_csv_text_is_neutralised():
+    assert io.MAX_JSON_BYTES == 50 * 1024 * 1024
+    with pytest.raises(io.DataProblem, match="below 1 MB"):
+        io.parse('{"x": "' + "a" * (1024 * 1024) + '"}', max_bytes=1024 * 1024)
+    import pandas as pd
+
+    raw = io.csv_bytes(pd.DataFrame({"text": ["=1+1", "\tcmd", " @x", "plain"]})).decode("utf-8-sig")
+    assert "'=1+1" in raw and "'\tcmd" in raw and "' @x" in raw and "\nplain" in raw.replace("\r", "")

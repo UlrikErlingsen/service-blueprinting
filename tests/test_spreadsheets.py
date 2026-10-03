@@ -34,14 +34,6 @@ def quick_tables(raw):
     return mapped
 
 
-def settings():
-    if NAME == "learn":
-        return {"unit": "NOK", "horizon": "Next year"}
-    if NAME == "reach":
-        return {"demand_unit": "Residents", "period": "October 2026", "attractiveness_definition": "Store area in square metres", "alpha": 1.0, "beta": 1.5, "distance_floor": .25, "access_threshold": 5.0}
-    return {}
-
-
 def assert_same_inputs(actual, expected):
     # Excel stores numeric cells at decimal precision; allow only rounding noise.
     if isinstance(expected, float):
@@ -72,22 +64,14 @@ def test_blank_workbook_roundtrip_keeps_unknowns():
 
 def test_simple_example_builds_valid_independent_case():
     mapped = quick_tables(sheets.simple_template())
-    d = fmt.build("Our imported case", mapped, settings(), "example.xlsx")
+    d = fmt.build("Our imported case", mapped, {}, "example.xlsx")
     assert model.validate(d) == d
     assert d["brief"] == "Our imported case"
     assert d["sources"][0]["id"] == "FILE1"
     assert all(r.get("source_id", "FILE1") != "N1" for k in model.TITLES for r in d[k])
-    if NAME == "blueprint":
-        assert [x["name"] for x in d["stages"]] == ["Arrive", "Order"]
-        assert len(d["actions"]) == 3 and d["actions"][0]["minutes"] is None
-        assert not d["links"]
-    elif NAME == "learn":
-        assert model.analyze(d)["evpi"] == pytest.approx(36000)
-        assert d["studies"] == []
-    else:
-        result = model.allocate(d)
-        assert result["sites"].allocated_demand.sum() == pytest.approx(2100)
-        assert len(d["sites"]) == 3
+    assert [x["name"] for x in d["stages"]] == ["Arrive", "Order"]
+    assert len(d["actions"]) == 3 and d["actions"][0]["minutes"] is None
+    assert not d["links"]
 
 
 def test_csv_keeps_text_and_explicit_decimal_choice():
@@ -201,13 +185,6 @@ def test_upload_mapping_preview_and_commit_clear_review(monkeypatch, complete):
     assert a.session_state[NAME+":project"] == original
     if not complete:
         next(t for t in a.text_area if t.label == "What question should these data help answer?").set_value("Test import of our business case")
-        if NAME == "learn":
-            next(t for t in a.text_input if t.label == "Payoff unit").set_value("NOK")
-            next(t for t in a.text_input if t.label == "Time horizon").set_value("Next year")
-        if NAME == "reach":
-            next(t for t in a.text_input if t.label == "What does demand measure?").set_value("Residents")
-            next(t for t in a.text_input if t.label == "Time period or reference date").set_value("October 2026")
-            next(t for t in a.text_input if t.label == "What does site attractiveness measure?").set_value("Store area")
         a.run()
     assert not a.exception and not a.error and not a.warning
     a.button(key=NAME+":use_spreadsheet").click().run()
@@ -227,3 +204,19 @@ def test_bad_upload_does_not_change_current_project(monkeypatch):
     a.button(key=NAME+":start:Excel or CSV").click().run()
     assert a.error and not a.exception
     assert a.session_state[NAME+":project"] == original
+
+
+def test_file_limit_follows_the_50_mb_upload_cap():
+    assert sheets.MAX_BYTES == 50 * 1024 * 1024
+    note = "x" * 700
+    raw = ("Stage,Service layer,What happens\n" + "".join(f"S,Customer actions,{i} {note}\n" for i in range(9_000))).encode()
+    assert 5_000_000 < len(raw) < sheets.MAX_BYTES  # above the old 5 MB limit, well inside the new one
+    assert len(sheets.load_tables([("large.csv", raw)])["large"]) == 9_000
+    with pytest.raises(io.DataProblem, match="no more than 1 MB"):
+        sheets.load_tables([("large.csv", raw)], max_bytes=1024 * 1024)
+
+
+def test_row_guard_is_a_method_limit_with_a_clear_message():
+    raw = ("Stage,What happens\n" + "".join(f"S,Step {i}\n" for i in range(sheets.MAX_ROWS + 5))).encode()
+    with pytest.raises(io.DataProblem, match="one service"):
+        sheets.load_tables([("long.csv", raw)])

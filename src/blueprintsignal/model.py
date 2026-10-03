@@ -24,9 +24,12 @@ SCHEMA = io.obj({"schema_version": {"const": "1.0"}, "brief": io.text(2500), "st
 TITLES = {"stages": "Stages · chronological order", "actions": "Actions and visible evidence · one item per row",
           "links": "Dependencies and handoffs · action IDs", "hazards": "Potential failure points",
           "improvements": "Improvement experiments", "sources": "Sources or supplied process notes"}
-REFERENCES = [("Bitner, Ostrom & Morgan (2008). Service Blueprinting: A Practical Technique for Service Innovation.",
-               "https://cmr.berkeley.edu/2008/05/50-3-service-blueprinting-a-practical-technique-for-service-innovation/"),
-              ("Shostack (1984). Designing Services That Deliver.", "https://hbr.org/1984/01/designing-services-that-deliver")]
+REFERENCES = [("Shostack, G. L. (1982). How to design a service. European Journal of Marketing, 16(1), 49–63.",
+               "https://doi.org/10.1108/EUM0000000004799"),
+              ("Shostack, G. L. (1984). Designing services that deliver. Harvard Business Review, January 1984.",
+               "https://hbr.org/1984/01/designing-services-that-deliver"),
+              ("Bitner, M. J., Ostrom, A. L., & Morgan, F. N. (2008). Service blueprinting: A practical technique for service "
+               "innovation. California Management Review, 50(3), 66–94.", "https://doi.org/10.2307/41166446")]
 METHOD = ("A service blueprint connects customer actions to visible service delivery, backstage work, support processes and tangible evidence. "
           "The diagram separates interaction, visibility and internal interaction. Stages are ordered by the user; explicit links record dependencies, including rework. "
           "The audits are application rules that identify missing ownership, missing evidence and incomplete follow-up plans. They are not a validated quality score.")
@@ -43,7 +46,27 @@ AI_RULES = ("Use the five lanes evidence, customer, frontstage, backstage, suppo
 REVIEW_GUIDANCE = "Check the process with the people delivering it. Confirm owners, lane placement, source alignment and whether each step is observed, assumed or proposed."
 
 
+# Method limits: one blueprint is one service on one screen. Larger processes belong in several blueprints.
+CAPACITY = {name: SCHEMA["properties"][name]["maxItems"] for name in TITLES}
+CAPACITY_NAMES = {"stages": "stages", "actions": "service items", "links": "handoffs", "hazards": "failure points",
+                  "improvements": "improvement plans", "sources": "sources"}
+
+
+def check_capacity(data):
+    """Explain an oversized case plainly instead of letting the schema print the whole list."""
+    if not isinstance(data, dict):
+        return
+    for name, limit in CAPACITY.items():
+        rows = data.get(name)
+        if isinstance(rows, list) and len(rows) > limit:
+            raise io.DataProblem(
+                f"This case has {len(rows):,} {CAPACITY_NAMES[name]}; one blueprint holds at most {limit}. "
+                "A blueprint maps one service at a readable level of detail: split a long process into separate "
+                "blueprints (for example one per part of the journey), or merge fine-grained steps.")
+
+
 def validate(data):
+    check_capacity(data)
     d = io.validate_schema(data, SCHEMA)
     stages, actions, sources = [io.unique(d[k]) for k in ["stages", "actions", "sources"]]
     io.unique(d["stages"], "order")

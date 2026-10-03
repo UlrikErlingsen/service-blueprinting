@@ -4,16 +4,40 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blueprintsignal"
-version = "0.1.0"
-description = "Blueprint Signal: service design, handoffs and improvement planning"
+version = "1.0.0"
+description = "Blueprint Signal: service blueprints, handoffs and improvement planning"
+readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
 authors = [{name = "Ulrik Erlingsen"}]
+keywords = [
+  "service blueprint",
+  "service design",
+  "customer experience",
+  "handoffs",
+  "process improvement",
+  "marketing analytics",
+  "streamlit",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Office/Business",
+]
 dependencies = ["pandas>=2.0,<3", "jsonschema>=4.21,<5", "openpyxl>=3.1.5,<4"]
 
 [project.optional-dependencies]
-ui = ["streamlit>=1.50,<2", "plotly>=5.18,<8"]
-test = ["pytest>=8,<10", "ruff>=0.8,<1", "streamlit>=1.50,<2", "plotly>=5.18,<8"]
+ui = ["streamlit>=1.51,<2", "plotly>=5.18,<8"]
+test = ["pytest>=8,<10", "ruff>=0.8,<1", "build>=1.2,<2", "streamlit>=1.51,<2", "plotly>=5.18,<8"]
+
+[project.urls]
+Homepage = "https://github.com/UlrikErlingsen/service-blueprinting"
+Source = "https://github.com/UlrikErlingsen/service-blueprinting"
+Issues = "https://github.com/UlrikErlingsen/service-blueprinting/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
