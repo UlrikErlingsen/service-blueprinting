@@ -2,6 +2,17 @@
 
 All notable changes to Blueprint Signal are documented here.
 
+## [1.1.0] - 2026-10-03
+
+### Changed
+
+- **No app-imposed data limits on your own computer.** File size, rows, columns, sheets, cells, stages, service items, handoffs, failure points, improvement plans, sources and pasted text are limited only by the computer's memory. Running out of memory gives a plain message instead of a crash.
+- **Public demo caps** apply only when `SIGNAL_PUBLIC=1` (50 MB uploads; 10,000 rows, 80 columns, 30 sheets and 250,000 cells; 12 stages, 120 service items, 250 handoffs, 120 failure points, 120 plans, 100 sources; 1,000,000 pasted characters). They live in one module, `blueprintsignal.limits`, and every refusal says it is a demo limit.
+- Upload cap raised to 10,000 MB in `.streamlit/config.toml`, both launchers (`BLUEPRINTSIGNAL_MAX_UPLOAD_MB`) and the Dockerfile (`STREAMLIT_SERVER_MAX_UPLOAD_SIZE`).
+- Large blueprints stay readable: the board shows 12 stages at a time with a selector and a note, and above 300 dependencies the diagram draws plain lines. The handoff review, the standalone board and all exports keep every record.
+- Rework loops are found with strongly connected components (linear time) instead of one search per handoff.
+- Stage order no longer has an upper bound of 100.
+
 ## [1.0.0] - 2026-10-03
 
 First public release.
